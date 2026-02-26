@@ -36,19 +36,27 @@ const IDEMPOTENCY_TTL_SECONDS = 24 * 60 * 60; // 24 horas
 async function processPayment(event) {
   // 1. Extrair e validar entrada
   const { idempotencyKey, tenantId, gateway, payload } = extractAndValidateInput(event);
+  
+  // Determinar se deve pular idempotência (para testes/local)
+  const skipIdempotency = process.env.SKIP_IDEMPOTENCY === 'true' || process.env.SKIP_IDEMPOTENCY === true;
 
-  // 2. Verificar idempotência
-  const cachedResponse = await checkIdempotency(tenantId, idempotencyKey);
-  if (cachedResponse) {
-    logger.info('Request fulfilled from cache', {
-      tenantId,
-      idempotencyKey
-    });
-    return {
-      statusCode: 200,
-      body: JSON.stringify(cachedResponse),
-      headers: { 'Content-Type': 'application/json' }
-    };
+  // 2. Verificar idempotência (pode pular em mock local)
+  let cachedResponse = null;
+  if (!skipIdempotency) {
+    cachedResponse = await checkIdempotency(tenantId, idempotencyKey);
+    if (cachedResponse) {
+      logger.info('Request fulfilled from cache', {
+        tenantId,
+        idempotencyKey
+      });
+      return {
+        statusCode: 200,
+        body: JSON.stringify(cachedResponse),
+        headers: { 'Content-Type': 'application/json' }
+      };
+    }
+  } else {
+    logger.debug('Skipping idempotency check (local/test mode)');
   }
 
   // 3. Validar payload do pagamento
@@ -60,8 +68,10 @@ async function processPayment(event) {
   // 5. Normalizar resposta
   const normalizedResponse = normalizeGatewayResponse(gateway, gatewayResponse);
 
-  // 6. Salvar para idempotência
-  await saveIdempotencyRecord(tenantId, idempotencyKey, normalizedResponse);
+  // 6. Salvar para idempotência (se não estiver skipando)
+  if (!skipIdempotency) {
+    await saveIdempotencyRecord(tenantId, idempotencyKey, normalizedResponse);
+  }
 
   return {
     statusCode: 201,
@@ -174,6 +184,11 @@ async function processWithGateway(gateway, payload) {
  * @param {Object} response - Resposta a armazenar
  */
 async function saveIdempotencyRecord(tenantId, idempotencyKey, response) {
+  if (process.env.SKIP_IDEMPOTENCY === 'true') {
+    logger.debug('Skipping save idempotency record (local mode)');
+    return;
+  }
+
   try {
     await ddbDocClient.send(new PutCommand({
       TableName: getIdempotencyTable(),

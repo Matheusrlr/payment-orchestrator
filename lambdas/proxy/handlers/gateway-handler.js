@@ -66,15 +66,85 @@ class GatewayHandler {
 class EFIHandler extends GatewayHandler {
   constructor() {
     super('efi');
+    this.accessToken = null;
+    this.tokenExpiry = null;
     this.setupAuthentication();
   }
 
   setupAuthentication() {
-    // Configurar autenticação OAuth com EFI
-    // Em produção, isso vem de variáveis de ambiente seguras
-    const apiKey = process.env.EFI_API_KEY;
-    if (apiKey) {
-      this.client.defaults.headers.common['Authorization'] = `Bearer ${apiKey}`;
+    // Efí uses OAuth 2.0 flow, so we'll configure the base client
+    // and fetch token when needed
+    const { certificatePath } = this.config;
+
+    if (certificatePath) {
+      const fs = require('fs');
+      const https = require('https');
+      try {
+        // Tentar carregar como .p12 primeiro, depois como .pem
+        let certData;
+        if (certificatePath.endsWith('.p12')) {
+          certData = fs.readFileSync(certificatePath);
+          this.client.defaults.httpsAgent = new https.Agent({
+            pfx: certData,
+            passphrase: ""
+          });
+        } else {
+          // Para .pem ou outros formatos
+          certData = fs.readFileSync(certificatePath);
+          this.client.defaults.httpsAgent = new https.Agent({
+            cert: certData,
+            rejectUnauthorized: false
+          });
+        }
+        logger.info('EFI Certificate loaded', { path: certificatePath });
+      } catch (error) {
+        logger.warn('Failed to load certificate', { certificatePath, error: error.message });
+      }
+    }
+  }
+
+  /**
+   * Obtém access token via OAuth
+   * 
+   * @private
+   * @returns {Promise<string>} Access token
+   */
+  async getAccessToken() {
+    // Verificar se token ainda é válido
+    if (this.accessToken && this.tokenExpiry && Date.now() < this.tokenExpiry) {
+      return this.accessToken;
+    }
+
+    const { clientId, clientSecret, apiBaseUrl } = this.config;
+    
+    const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+    
+    try {
+      const response = await this.client.post(`${apiBaseUrl}/oauth/token`, 
+        { grant_type: 'client_credentials' },
+        {
+          headers: {
+            'Authorization': `Basic ${credentials}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      this.accessToken = response.data.access_token;
+      // Armazenar expiry com margem de segurança (90% do tempo de expiração)
+      this.tokenExpiry = Date.now() + (response.data.expires_in * 900);
+      
+      logger.info('EFI OAuth token obtained', {
+        expiresIn: response.data.expires_in
+      });
+      
+      return this.accessToken;
+    } catch (error) {
+      logger.error('Failed to obtain EFI access token', {
+        error: error.message,
+        url: `${apiBaseUrl}/oauth/token`
+      });
+      throw error;
     }
   }
 
@@ -86,15 +156,49 @@ class EFIHandler extends GatewayHandler {
    */
   async processPayment(payload) {
     try {
+      // DEBUG: mostrar config usado pelo handler
+      console.log('EFIHandler.config at runtime', this.config);
       logger.info('Processing EFI payment', {
         gateway: this.gatewayName,
         amount: payload.amount
       });
 
-      // Simulação: Em produção, fazer POST para /v2/cob
-      const response = await this.simulateEFIPayment(payload);
+      // se credenciais estiverem configuradas, realiza chamada real
+      if (this.config.clientId && this.config.clientSecret) {
+        // Obter access token via OAuth
+        const accessToken = await this.getAccessToken();
+        
+        // montar corpo conforme API Efí
+        const body = {
+          calendario: { expiracao: payload.expiracao || 3600 },
+          devedor: payload.devedor || undefined, // pode ser undefined
+          valor: { original: payload.amount.toString() },
+          chave: payload.chave || payload.key || null,
+          solicitacaoPagador: payload.description || payload.solicitacaoPagador || ''
+        };
 
-      logger.info('EFI payment processed', {
+        const url = `${this.config.apiBaseUrl.replace(/\/+$/,'')}/v2/cob`;
+        
+        // Fazer requisição com Bearer token
+        const response = await this.client.post(url, body, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        logger.info('EFI payment processed (real API)', {
+          gateway: this.gatewayName,
+          status: response.data.status,
+          txid: response.data.txid
+        });
+
+        return response.data;
+      }
+
+      // fallback para simulação local
+      const response = await this.simulateEFIPayment(payload);
+      logger.info('EFI payment processed (mock)', {
         gateway: this.gatewayName,
         efiId: response.id
       });
