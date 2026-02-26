@@ -1,0 +1,85 @@
+openapi: 3.0.0
+info:
+  title: Payment Orchestrator API (BaaS)
+  version: 1.0.0
+  description: API Centralizadora para orquestração de pagamentos (Efí, Stripe, Asaas)
+
+paths:
+  /payments:
+    post:
+      summary: Criar um novo pagamento (Pix ou Boleto)
+      parameters:
+        - in: header
+          name: X-Idempotency-Key
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentRequest'
+      responses:
+        '201':
+          description: Pagamento criado com sucesso
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Erro na requisição
+        '401':
+          description: Não autorizado (API Key inválida)
+
+components:
+  schemas:
+    PaymentRequest:
+      type: object
+      required:
+        - amount
+        - payment_method
+        - customer
+      properties:
+        amount:
+          type: integer
+          description: Valor em centavos
+        payment_method:
+          type: string
+          enum: [pix, boleto, credit_card]
+        customer:
+          type: object
+          properties:
+            name:
+              type: string
+            email:
+              type: string
+            document:
+              type: string
+              description: CPF ou CNPJ
+        callback_url:
+          type: string
+          format: uri
+
+    PaymentResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: ID único da nossa plataforma
+        gateway_id:
+          type: string
+          description: ID original no gateway
+        status:
+          type: string
+          enum: [pending, paid, failed, canceled]
+        payment_data:
+          type: object
+          description: Dados específicos para conclusão (ex. QR Code Pix)
+          properties:
+            qr_code:
+              type: string
+            copy_paste:
+              type: string
+            barcode:
+              type: string
