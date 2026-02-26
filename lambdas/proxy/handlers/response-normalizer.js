@@ -41,14 +41,20 @@ function normalizeEFIResponse(efiResponse) {
   return {
     id: generateOrchestrationId(),
     gateway: 'efi',
-    gateway_id: efiResponse.id,
-    status: 'pending',
+    gateway_id: efiResponse.txid || efiResponse.id,
+    status: efiResponse.status || 'pending',
     payment_type: 'pix',
     created_at: new Date().toISOString(),
     data: {
-      qr_code: efiResponse.pix?.qrcode,
-      copy_paste: efiResponse.pix?.copiaecola,
-      expires_at: efiResponse.pix?.expiresAt
+      txid: efiResponse.txid,
+      qr_code_url: efiResponse.location || efiResponse.loc?.location,
+      qr_code: efiResponse.brcode || efiResponse.qrcode || efiResponse.pix?.qrcode,
+      copy_paste: efiResponse.pixCopiaECola || efiResponse.copiaecola || efiResponse.pix?.copiaecola,
+      expires_at: efiResponse.expiracao || efiResponse.pix?.expiresAt,
+      devedor: efiResponse.devedor,
+      valor: efiResponse.valor,
+      calendar_created: efiResponse.calendario?.criacao,
+      full_response: efiResponse  // incluir resposta completa para referência
     }
   };
 }
@@ -86,11 +92,13 @@ function normalizeStripeResponse(stripeResponse) {
  * @throws {ValidationError} Se resposta é inválida
  */
 function validateEFIResponse(response) {
-  if (!response.id) {
-    throw new ValidationError('EFI response missing id');
+  // Efí pode retornar txid ou id
+  if (!response.txid && !response.id) {
+    throw new ValidationError('EFI response missing txid or id');
   }
-  if (!response.pix || !response.pix.qrcode) {
-    throw new ValidationError('EFI response missing PIX QR code');
+  // QR code pode estar em diferentes fields dependendo do tipo de cobrança
+  if (!response.brcode && !response.qrcode && !response.pix?.qrcode) {
+    logger.warn('EFI response may not have QR code', { response });
   }
 }
 

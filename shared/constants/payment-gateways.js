@@ -7,9 +7,15 @@ const GATEWAYS = {
   EFI: {
     name: 'efi',
     displayName: 'EFI Pagamentos',
-    apiBaseUrl: 'https://api.efi.com.br',
+    // permite sobrescrever via variável de ambiente para testes locais
+    apiBaseUrl: process.env.EFI_API_BASE_URL || 'https://api.efi.com.br',
     timeout: 5000,
-    maxRetries: 3
+    maxRetries: 3,
+    // credenciais específicas do Efí (opcionais, usadas pelo handler)
+    clientId: process.env.EFI_CLIENT_ID || null,
+    clientSecret: process.env.EFI_CLIENT_SECRET || null,
+    sandbox: process.env.EFI_SANDBOX === 'true',
+    certificatePath: process.env.EFI_CERTIFICATE || null
   },
   STRIPE: {
     name: 'stripe',

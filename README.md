@@ -177,7 +177,14 @@ cd ../worker && npm install
 # Lambda: Proxy
 IDEMPOTENCY_TABLE=payment-idempotency
 METRICS_TABLE=gateway-metrics
-EFI_API_KEY=oauth_token_xxx
+# Efí (Pix) credentials / configs
+EFI_API_KEY=oauth_token_xxx                # token simples (opcional)
+EFI_CLIENT_ID=client_id                     # credenciais Efipay
+EFI_CLIENT_SECRET=client_secret
+EFI_SANDBOX=false                            # use sandbox para testes
+EFI_CERTIFICATE=/caminho/para/certificado.pem
+EFI_API_BASE_URL=https://sandbox.efi.com.br # sobrescreve URL base padrão
+
 STRIPE_API_KEY=sk_live_xxx
 
 # Lambda: Webhook Receiver
@@ -186,6 +193,20 @@ WEBHOOK_QUEUE_URL=https://sqs.us-east-1.amazonaws.com/123/webhook-queue
 # Todos (Opcional)
 DEBUG=false
 ```
+
+### Running Locally (mock)
+
+Se quiser testar apenas a geração de cobranças sem fazer deploy AWS, há um pequeno script que simula uma chamada ao proxy:
+
+```bash
+cd payment-orchestrator
+npm install # instale nas pastas lambdas/proxy etc., ou configure PATH de node_modules
+node scripts/create_pix_charge.js
+```
+
+O script usa o handler `paymentService.processPayment` e se baseia na implementação de `EFIHandler.simulateEFIPayment` para retornar um objeto Pix falso. Defina `EFI_SANDBOX=true` ou ajuste as variáveis acima para controlar comportamento.
+
+As credenciais do Efí (client_id, client_secret, certificado, sandbox) são lidas de variáveis de ambiente; nada precisa estar hard‑coded.
 
 ### Deployment
 
