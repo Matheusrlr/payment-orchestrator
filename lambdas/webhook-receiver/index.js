@@ -1,25 +1,51 @@
-const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
-const sqs = new SQSClient({});
+/**
+ * Webhook Receiver Lambda
+ * 
+ * Recebe webhooks de gateways de pagamento e coloca em fila para processamento
+ * Valida origem e autentica requisições antes de enfileirar
+ */
 
-exports.handler = async (event) => {
-    // 1. Identificar Gateway pela URL ou Header
-    const gateway = event.pathParameters?.gateway; // ex: /webhooks/efi
-    const payload = JSON.parse(event.body);
+const webhookService = require('./service');
+const { createErrorResponse } = require('./handlers/response-handler');
+const logger = require('../../shared/utils/logger');
 
-    console.log(`Webhook received from ${gateway}:`, payload);
+/**
+ * AWS Lambda handler para webhooks de pagamento
+ * 
+ * @param {Object} event - Evento da API Gateway
+ * @param {Object} context - Contexto da Lambda
+ * @returns {Promise<Object>} Resposta HTTP formatada
+ */
+exports.handler = async (event, context) => {
+  const startTime = Date.now();
 
-    // 2. Enfileirar para processamento assíncrono
-    await sqs.send(new SendMessageCommand({
-        QueueUrl: process.env.WEBHOOK_QUEUE_URL,
-        MessageBody: JSON.stringify({
-            gateway,
-            payload,
-            receivedAt: new Date().toISOString()
-        })
-    }));
+  try {
+    logger.debug('Webhook received', {
+      path: event.path,
+      source: event.headers['x-webhook-source'],
+      requestId: context.requestId
+    });
 
-    return {
-        statusCode: 200,
-        body: JSON.stringify({ message: "Webhook received and queued" })
-    };
+    // Processar webhook
+    const response = await webhookService.processWebhook(event);
+
+    const duration = Date.now() - startTime;
+    logger.info('Webhook queued successfully', {
+      requestId: context.requestId,
+      statusCode: response.statusCode,
+      durationMs: duration
+    });
+
+    return response;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('Webhook processing failed', {
+      requestId: context.requestId,
+      error,
+      durationMs: duration
+    });
+
+    return createErrorResponse(error);
+  }
 };
+

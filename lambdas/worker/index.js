@@ -1,35 +1,54 @@
-const axios = require("axios");
+/**
+ * Webhook Worker Lambda
+ * 
+ * Consome webhooks da fila SQS e os entrega aos clientes
+ * Implementa retry automático e tratamento de erro robusto
+ */
 
-exports.handler = async (event) => {
-    for (const record of event.Records) {
-        const { gateway, payload } = JSON.parse(record.body);
-        
-        // 1. Normalizar o status para o formato do SaaS
-        const normalizedData = normalizeWebhook(gateway, payload);
-        
-        // 2. Buscar URL de callback do cliente (No DB real)
-        const clientCallbackUrl = "https://client-api.com/webhooks/payments"; 
+const workerService = require('./service');
+const logger = require('../../shared/utils/logger');
 
-        try {
-            await axios.post(clientCallbackUrl, normalizedData, { timeout: 5000 });
-            console.log(`Successfully delivered webhook for gateway ${gateway}`);
-        } catch (error) {
-            console.error(`Failed to deliver webhook: ${error.message}`);
-            // O SQS fará o retry automático se lançarmos erro
-            throw error; 
-        }
+/**
+ * AWS Lambda handler para processamento de webhooks da fila
+ * 
+ * @param {Object} event - Evento SQS com registros de mensagens
+ * @param {Object} context - Contexto da Lambda
+ * @returns {Promise<Object>} Resposta com status de cada mensagem
+ */
+exports.handler = async (event, context) => {
+  logger.debug('Worker processing batch', {
+    recordCount: event.Records.length,
+    requestId: context.requestId
+  });
+
+  // Processar cada mensagem da fila
+  const batchItemFailures = [];
+
+  for (const record of event.Records) {
+    try {
+      await workerService.processWebhookRecord(record);
+      logger.debug('Webhook processed successfully', {
+        messageId: record.messageId
+      });
+    } catch (error) {
+      logger.error('Failed to process webhook', {
+        messageId: record.messageId,
+        error
+      });
+      // Marcar para retry (SQS fará retry automático)
+      batchItemFailures.push({
+        itemId: record.messageId
+      });
     }
+  }
+
+  logger.info('Batch processing complete', {
+    requestId: context.requestId,
+    totalRecords: event.Records.length,
+    failedRecords: batchItemFailures.length
+  });
+
+  // Retornar falhas para SQS fazer retry
+  return { batchItemFailures };
 };
 
-function normalizeWebhook(gateway, payload) {
-    if (gateway === 'efi') {
-        return {
-            event: "payment.updated",
-            orch_id: payload.pix[0].txid, // Exemplo simplificado
-            status: payload.pix[0].horario ? "paid" : "pending",
-            amount: payload.pix[0].valor,
-            gateway: "efi"
-        };
-    }
-    return payload;
-}

@@ -1,91 +1,56 @@
-const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, GetCommand, PutCommand } = require("@aws-sdk/lib-dynamodb");
-const axios = require("axios");
+/**
+ * Payment Proxy Lambda Handler
+ * 
+ * Responsabilidades:
+ * 1. Validar request
+ * 2. Verificar idempotência
+ * 3. Rotear para gateway apropriado
+ * 4. Retornar resposta normalizada
+ * 
+ * Este arquivo contém APENAS o handler Lambda
+ * Lógica de negócio está em service.js
+ */
 
-const client = new DynamoDBClient({});
-const ddbDocClient = DynamoDBDocumentClient.from(client);
+const paymentService = require('./service');
+const { createErrorResponse } = require('./handlers/response-handler');
+const logger = require('../../shared/utils/logger');
 
-exports.handler = async (event) => {
-    const idempotencyKey = event.headers['x-idempotency-key'] || event.headers['X-Idempotency-Key'];
-    const tenantId = event.requestContext.authorizer.tenantId; // Injetado pelo Lambda Authorizer
+/**
+ * AWS Lambda handler para requisições de pagamento
+ * 
+ * @param {Object} event - Evento da API Gateway
+ * @param {Object} context - Contexto da Lambda
+ * @returns {Promise<Object>} Resposta HTTP formatada
+ */
+exports.handler = async (event, context) => {
+  const startTime = Date.now();
 
-    if (!idempotencyKey) {
-        return { statusCode: 400, body: JSON.stringify({ error: "Missing Idempotency Key" }) };
-    }
+  try {
+    logger.debug('Payment request received', {
+      path: event.path,
+      method: event.httpMethod,
+      requestId: context.requestId
+    });
 
-    // 1. Verificar Idempotência
-    const checkIdempotency = await ddbDocClient.send(new GetCommand({
-        TableName: process.env.IDEMPOTENCY_TABLE,
-        Key: { pk: `TENANT#${tenantId}`, sk: `IDEM#${idempotencyKey}` }
-    }));
+    // Processar pagamento
+    const response = await paymentService.processPayment(event);
 
-    if (checkIdempotency.Item) {
-        return { statusCode: 200, body: checkIdempotency.Item.response };
-    }
+    const duration = Date.now() - startTime;
+    logger.info('Payment processed successfully', {
+      requestId: context.requestId,
+      statusCode: response.statusCode,
+      durationMs: duration
+    });
 
-    try {
-        const body = JSON.parse(event.body);
-        const gateway = event.requestContext.authorizer.activeGateway; // e.g., 'efi'
+    return response;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    logger.error('Payment processing failed', {
+      requestId: context.requestId,
+      error,
+      durationMs: duration
+    });
 
-        let gatewayResponse;
-        
-        // 2. Proxy para o Gateway
-        if (gateway === 'efi') {
-            gatewayResponse = await handleEfiPayment(body);
-        } else if (gateway === 'stripe') {
-            gatewayResponse = await handleStripePayment(body);
-        }
-
-        const normalizedResponse = normalizeResponse(gateway, gatewayResponse);
-
-        // 3. Salvar Idempotência
-        await ddbDocClient.send(new PutCommand({
-            TableName: process.env.IDEMPOTENCY_TABLE,
-            Item: {
-                pk: `TENANT#${tenantId}`,
-                sk: `IDEM#${idempotencyKey}`,
-                response: JSON.stringify(normalizedResponse),
-                ttl: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24h TTL
-            }
-        }));
-
-        return {
-            statusCode: 201,
-            body: JSON.stringify(normalizedResponse)
-        };
-
-    } catch (error) {
-        console.error(error);
-        return {
-            statusCode: error.response?.status || 500,
-            body: JSON.stringify({ error: "Payment processing failed", details: error.message })
-        };
-    }
+    return createErrorResponse(error);
+  }
 };
-
-async function handleEfiPayment(data) {
-    // Lógica simplificada Efí (Pix)
-    // Aqui entraria a autenticação OAuth da Efí e o POST /v2/cob
-    return { id: "efi_tx_123", status: "ATIVA", pix: { qrcode: "...", copiaecola: "..." } };
-}
-
-async function handleStripePayment(data) {
-    // Lógica simplificada Stripe
-    return { id: "pi_123", status: "requires_payment_method" };
-}
-
-function normalizeResponse(gateway, data) {
-    if (gateway === 'efi') {
-        return {
-            id: `orch_${Date.now()}`,
-            gateway_id: data.id,
-            status: "pending",
-            payment_data: {
-                qr_code: data.pix.qrcode,
-                copy_paste: data.pix.copiaecola
-            }
-        };
-    }
-    // Adicionar normalização para outros gateways...
-    return data;
-}
