@@ -1,0 +1,42 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# AWS credentials
+.aws/
+
+# Node modules
+node_modules/
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-project
+
+# Logs
+*.log
+npm-debug.log*
+
+# Optional npm cache
+.npm
+
+# Certificates
+*.p12
+*.pem
+*.key
+*.crt
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
