@@ -249,6 +249,36 @@ function validateContaBanco(contaBanco) {
 }
 
 /**
+ * Valida requisição de devolução de Pix
+ * Conforme documentação Efí: POST /v3/gn/pix/{idEnvio}/devolucao/{reTxId}
+ * 
+ * @param {Object} payload - Payload de devolução de Pix
+ * @throws {ValidationError} Se validação falhar
+ */
+function validatePixRefund(payload) {
+  validators.isObject(payload, 'Pix refund payload');
+
+  // Validar campos obrigatórios
+  validators.required(payload.idDevolucao, 'idDevolucao');
+  validators.required(payload.idEnvioOrigem, 'idEnvioOrigem');
+  validators.required(payload.valor, 'valor');
+  validators.required(payload.motivo, 'motivo');
+
+  // Validar idDevolucao
+  validateIdEnvio(payload.idDevolucao);
+
+  // Validar idEnvioOrigem
+  validateIdEnvio(payload.idEnvioOrigem);
+
+  // Validar valor
+  validateValor(payload.valor);
+
+  // Validar motivo (enum)
+  const validMotivos = ['SOLICITACAO_PAYER', 'SOLICITACAO_CREDOR', 'FALHA_NA_ENTREGA'];
+  validators.isOneOf(payload.motivo, validMotivos, 'motivo');
+}
+
+/**
  * Valida status retornado no webhook
  * Valores aceitos: EM_PROCESSAMENTO, REALIZADO, NAO_REALIZADO
  * 
@@ -269,5 +299,6 @@ module.exports = {
   validateCPF,
   validateCNPJ,
   validateContaBanco,
-  validatePixStatus
+  validatePixStatus,
+  validatePixRefund
 };

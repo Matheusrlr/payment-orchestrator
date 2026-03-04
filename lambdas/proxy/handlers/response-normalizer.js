@@ -14,10 +14,16 @@ const { ValidationError } = require('../../../shared/utils/errors');
  * 
  * @param {string} gateway - Nome do gateway
  * @param {Object} response - Resposta bruta do gateway
+ * @param {string} type - Tipo de operação (payment | pix_send | pix_charge)
  * @returns {Object} Resposta normalizada
  * @throws {ValidationError} Se resposta é inválida
  */
-function normalizeGatewayResponse(gateway, response) {
+function normalizeGatewayResponse(gateway, response, type = 'payment') {
+  // Se type é pix_charge, rotear para normalizador específico
+  if (type === 'pix_charge') {
+    return normalizePixCharge(response, gateway);
+  }
+
   switch (gateway) {
     case 'efi':
       return normalizeEFIResponse(response);
@@ -137,6 +143,77 @@ function normalizeStripeStatus(stripeStatus) {
   };
 
   return statusMap[stripeStatus] || 'unknown';
+}
+
+/**
+ * Normaliza resposta de cobrança Pix
+ * 
+ * @private
+ * @param {Object} response - Resposta bruta do gateway
+ * @param {string} gateway - Nome do gateway (efi)
+ * @returns {Object} Resposta normalizada
+ */
+function normalizePixCharge(response, gateway) {
+  validatePixChargeResponse(response);
+
+  const normalized = {
+    id: response.id || response.txid,
+    idCobr: response.txid || response.id,
+    modalidade: response.modalidade,
+    status: response.status || 'ATIVA',
+    valor: response.valor,
+    gateway,
+    criadoEm: response.createdAt || new Date().toISOString()
+  };
+
+  // Adicionar campos opcionais se presentes
+  if (response.qrCode) {
+    normalized.qrCode = response.qrCode;
+  }
+
+  if (response.pixCopiaECola) {
+    normalized.pixCopiaECola = response.pixCopiaECola;
+  }
+
+  if (response.linkPagamento) {
+    normalized.linkPagamento = response.linkPagamento;
+  }
+
+  if (response.vencimento) {
+    normalized.vencimento = response.vencimento;
+    normalized.vencimentoEm = response.vencimento.data;
+  }
+
+  if (response.dataPagamento) {
+    normalized.dataPagamento = response.dataPagamento;
+  }
+
+  if (response.idTransacao) {
+    normalized.idTransacao = response.idTransacao;
+  }
+
+  return normalized;
+}
+
+/**
+ * Valida resposta de cobrança Pix
+ *
+ * @private
+ * @param {Object} response - Resposta a validar
+ * @throws {ValidationError} Se inválida
+ */
+function validatePixChargeResponse(response) {
+  if (!response.id && !response.txid) {
+    throw new ValidationError('Pix charge response missing id or txid');
+  }
+
+  if (!response.status) {
+    throw new ValidationError('Pix charge response missing status');
+  }
+
+  if (!response.valor) {
+    throw new ValidationError('Pix charge response missing valor');
+  }
 }
 
 /**

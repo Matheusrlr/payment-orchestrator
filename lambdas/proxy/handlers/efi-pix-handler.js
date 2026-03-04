@@ -34,15 +34,16 @@ class EFIPixHandler {
       const fs = require('fs');
       const https = require('https');
       try {
-        let certData;
+        const certData = certificatePath.endsWith('.p12')
+          ? fs.readFileSync(certificatePath)
+          : fs.readFileSync(certificatePath);
+
         if (certificatePath.endsWith('.p12')) {
-          certData = fs.readFileSync(certificatePath);
           this.client.defaults.httpsAgent = new https.Agent({
             pfx: certData,
             passphrase: ""
           });
         } else {
-          certData = fs.readFileSync(certificatePath);
           this.client.defaults.httpsAgent = new https.Agent({
             cert: certData,
             rejectUnauthorized: false
@@ -252,6 +253,107 @@ class EFIPixHandler {
     } catch (error) {
       this.handleError(error);
     }
+  }
+
+  /**
+   * Faz devolução de Pix (refund)
+   * Endpoint: POST /v3/gn/pix/{idEnvio}/devolucao/{reTxId}
+   * 
+   * @param {string} idEnvio - Identificador do envio original
+   * @param {Object} payload - Dados da devolução
+   * @param {string} payload.idDevolucao - ID da devolução
+   * @param {string} payload.valor - Valor em formato "12.34"
+   * @param {string} payload.motivo - Motivo: SOLICITACAO_PAYER, SOLICITACAO_CREDOR, FALHA_NA_ENTREGA
+   * @returns {Promise<Object>} Resposta da API EFI
+   * @throws {GatewayError} Se houver erro na operação
+   */
+  async refundPix(idEnvio, payload) {
+    try {
+      validateIdEnvio(idEnvio);
+
+      logger.info('Refunding Pix via EFI', {
+        gateway: this.gatewayName,
+        idEnvio,
+        motivo: payload.motivo,
+        valor: payload.valor
+      });
+
+      if (this.config.clientId && this.config.clientSecret) {
+        return await this.refundPixReal(idEnvio, payload);
+      }
+
+      return this.simulateRefundPix(idEnvio, payload);
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Faz devolução real via API EFI
+   * 
+   * @private
+   * @param {string} idEnvio - Identificador do envio
+   * @param {Object} payload - Dados da devolução
+   * @returns {Promise<Object>} Resposta da API
+   */
+  async refundPixReal(idEnvio, payload) {
+    try {
+      const accessToken = await this.getAccessToken();
+      const { idDevolucao, valor, motivo } = payload;
+      const url = `${this.config.apiBaseUrl}/v3/gn/pix/${idEnvio}/devolucao/${idDevolucao}`;
+
+      const body = {
+        valor,
+        motivo
+      };
+
+      const response = await this.client.post(url, body, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      logger.info('Pix refund processed (real API)', {
+        gateway: this.gatewayName,
+        idEnvio,
+        idDevolucao,
+        status: response.data.status || 'PENDENTE'
+      });
+
+      return response.data;
+    } catch (error) {
+      this.handleError(error);
+    }
+  }
+
+  /**
+   * Simula devolução de Pix (mock)
+   * 
+   * @private
+   * @param {string} idEnvio - Identificador do envio
+   * @param {Object} payload - Dados da devolução
+   * @returns {Object} Resposta simulada
+   */
+  simulateRefundPix(idEnvio, payload) {
+    const { idDevolucao, valor, motivo } = payload;
+
+    logger.debug('Simulating Pix refund (mock mode)', {
+      gateway: this.gatewayName,
+      idEnvio,
+      idDevolucao,
+      valor
+    });
+
+    return {
+      id: idDevolucao,
+      idEnvioOrigem: idEnvio,
+      valor,
+      motivo,
+      status: 'PENDENTE',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
   }
 
   /**
